@@ -252,7 +252,7 @@ runtime — khác với việc chỉ dùng Bedrock làm model provider ở trên
 ## 6. Cấu trúc thư mục đề xuất
 
 ```text
-simple-agent-workflow-poc/
+temporal-agent-workflow/
 │
 ├── README.md
 ├── docker-compose.yml          # temporal + worker + backend + ui, 1 lệnh chạy toàn bộ
