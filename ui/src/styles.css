@@ -1,0 +1,136 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --muted: #9aa3af;
+  --accent: #5b8cff;
+  --ok: #37c26a;
+  --warn: #e8b64c;
+  --danger: #e8544c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { margin: 0 0 4px; font-size: 1.3rem; }
+header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+
+main {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 20px;
+  padding: 20px 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.panel h2 { margin-top: 0; font-size: 1rem; }
+
+label { display: block; font-size: 0.85rem; color: var(--muted); margin: 12px 0 4px; }
+
+select, textarea, input {
+  width: 100%;
+  background: #0d0f14;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+textarea { resize: vertical; min-height: 60px; }
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+button.primary { background: var(--accent); color: white; }
+button.ok { background: var(--ok); color: #05170c; }
+button.danger { background: var(--danger); color: #200302; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.row { display: flex; gap: 10px; margin-top: 14px; }
+.row > * { flex: 1; }
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.status-RUNNING { background: #223049; color: #7fb3ff; }
+.status-WAITING_HUMAN { background: #3a2f10; color: var(--warn); }
+.status-FINISHED { background: #123422; color: var(--ok); }
+.status-ESCALATED { background: #3a1414; color: var(--danger); }
+.status-IDLE { background: #24272e; color: var(--muted); }
+
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li {
+  border-left: 2px solid var(--border);
+  padding: 8px 0 8px 14px;
+  margin-left: 6px;
+  position: relative;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: -5px; top: 14px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.timeline .role { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.timeline pre {
+  background: #0d0f14;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-box {
+  border: 1px solid var(--warn);
+  background: #201a08;
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 14px;
+}
+
+.muted { color: var(--muted); font-size: 0.85rem; }
+.incident-id { font-family: ui-monospace, monospace; color: var(--accent); }

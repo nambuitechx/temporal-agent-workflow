@@ -1,0 +1,10 @@
+{
+  "service": "checkout-api",
+  "time_range": "11:00-11:10",
+  "series": [
+    {"ts": "11:00", "p99_latency_ms": 250, "error_rate_pct": 0.3},
+    {"ts": "11:05", "p99_latency_ms": 260, "error_rate_pct": 0.4},
+    {"ts": "11:10", "p99_latency_ms": 255, "error_rate_pct": 0.3}
+  ],
+  "note": "Không có bất thường rõ ràng — không đủ evidence để kết luận RCA, cố tình mơ hồ để test circuit breaker (Scenario D)."
+}

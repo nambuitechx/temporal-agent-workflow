@@ -1,0 +1,12 @@
+[project]
+name = "xora-poc-worker"
+version = "0.1.0"
+description = "Temporal Worker (Orchestrator + Specialized Agents) cho Xora POC — Dynamic Agent Loop"
+requires-python = ">=3.12"
+dependencies = [
+  "temporalio==1.9.0",
+  "boto3==1.35.99",
+]
+
+[tool.uv]
+package = false

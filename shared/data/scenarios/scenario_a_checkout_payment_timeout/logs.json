@@ -1,0 +1,13 @@
+{
+  "service": "checkout-api",
+  "time_range": "10:25-10:35",
+  "entries": [
+    {"ts": "10:29:58", "level": "INFO", "message": "handling POST /checkout"},
+    {"ts": "10:30:02", "level": "ERROR", "message": "500 Internal Server Error handling POST /checkout"},
+    {"ts": "10:30:02", "level": "ERROR", "message": "connection timeout to payment-adapter after 3000ms"},
+    {"ts": "10:30:05", "level": "ERROR", "message": "500 Internal Server Error handling POST /checkout"},
+    {"ts": "10:30:05", "level": "ERROR", "message": "connection timeout to payment-adapter after 3000ms"},
+    {"ts": "10:30:11", "level": "ERROR", "message": "500 Internal Server Error handling POST /checkout"},
+    {"ts": "10:30:11", "level": "ERROR", "message": "connection timeout to payment-adapter after 3000ms"}
+  ]
+}

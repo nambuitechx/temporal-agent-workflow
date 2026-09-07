@@ -1,0 +1,11 @@
+{
+  "service": "payment-adapter",
+  "time_range": "10:20-10:35",
+  "series": [
+    {"ts": "10:20", "p99_latency_ms": 180, "error_rate_pct": 0.1},
+    {"ts": "10:25", "p99_latency_ms": 210, "error_rate_pct": 0.2},
+    {"ts": "10:28", "p99_latency_ms": 2100, "error_rate_pct": 4.5},
+    {"ts": "10:30", "p99_latency_ms": 3400, "error_rate_pct": 12.3},
+    {"ts": "10:32", "p99_latency_ms": 3600, "error_rate_pct": 14.8}
+  ]
+}

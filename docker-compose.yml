@@ -1,0 +1,77 @@
+services:
+  # Temporal dev server (temporal CLI's `server start-dev`) — persistence
+  # bằng SQLite file trong volume, kèm sẵn Temporal Web UI. Không phải cấu
+  # hình production, nhưng đủ để test durability/replay/Event History cho POC.
+  temporal:
+    image: temporalio/temporal:latest
+    entrypoint: ["temporal", "server", "start-dev"]
+    command:
+      - --ip=0.0.0.0
+      - --port=7233
+      - --ui-ip=0.0.0.0
+      - --ui-port=8233
+      - --db-filename=/home/temporal/temporal.db
+    ports:
+      - "7233:7233" # gRPC endpoint — worker/backend kết nối vào đây
+      - "8233:8233" # Temporal Web UI — xem Event History/replay
+    volumes:
+      - temporal-data:/home/temporal
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--address", "localhost:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      # Model AI qua AWS Bedrock (KHÔNG dùng ANTHROPIC_API_KEY) — xác thực bằng
+      # AWS credentials mount read-only từ host bên dưới. AWS_PROFILE trỏ tới
+      # 1 profile có sẵn trong ~/.aws/credentials của bạn (mặc định "default").
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+      - AWS_REGION=${AWS_REGION:-ap-southeast-1}
+      # ap-southeast-1 không hỗ trợ on-demand throughput cho Claude 3.5 Sonnet —
+      # bắt buộc qua cross-region inference profile (tiền tố "apac."), xem
+      # .env.example để biết chi tiết lỗi ValidationException nếu bỏ tiền tố này.
+      - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-apac.anthropic.claude-3-5-sonnet-20241022-v2:0}
+    volumes:
+      # Đọc AWS credentials từ host — KHÔNG bao giờ copy secrets vào image.
+      # Cần model tương ứng đã được enable trong Bedrock Model Access ở region trên.
+      - ${HOME}/.aws:/root/.aws:ro
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./ui
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+
+volumes:
+  temporal-data:

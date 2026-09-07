@@ -1,0 +1,10 @@
+{
+  "service": "checkout-api",
+  "time_range": "11:00-11:10",
+  "entries": [
+    {"ts": "11:00:12", "level": "WARN", "message": "elevated latency observed on some requests, cause unclear"},
+    {"ts": "11:03:44", "level": "WARN", "message": "intermittent 500s, no consistent stacktrace across occurrences"},
+    {"ts": "11:07:02", "level": "INFO", "message": "no errors in this window"}
+  ],
+  "note": "Log không có tín hiệu bất thường nhất quán — cố tình mơ hồ để test circuit breaker (Scenario D)."
+}

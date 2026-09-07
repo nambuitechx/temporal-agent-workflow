@@ -1,0 +1,9 @@
+{
+  "service": "checkout-api",
+  "time_range": "09:58-10:02",
+  "series": [
+    {"ts": "09:58", "db_auth_errors_per_min": 0},
+    {"ts": "10:00", "db_auth_errors_per_min": 420},
+    {"ts": "10:02", "db_auth_errors_per_min": 430}
+  ]
+}

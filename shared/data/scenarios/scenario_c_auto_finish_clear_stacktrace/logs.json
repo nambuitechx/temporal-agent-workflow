@@ -1,0 +1,12 @@
+{
+  "service": "checkout-api",
+  "time_range": "09:58-10:02",
+  "entries": [
+    {"ts": "09:59:50", "level": "INFO", "message": "deploy v2.14.0 rolled out to checkout-api"},
+    {"ts": "10:00:01", "level": "FATAL", "message": "500 Internal Server Error handling POST /checkout"},
+    {"ts": "10:00:01", "level": "FATAL", "message": "psycopg2.OperationalError: FATAL: password authentication failed for user \"checkout_svc\""},
+    {"ts": "10:00:01", "level": "FATAL", "message": "config diff: DATABASE_URL changed in v2.14.0 release, credentials not rotated"},
+    {"ts": "10:00:02", "level": "FATAL", "message": "500 Internal Server Error handling POST /checkout"},
+    {"ts": "10:00:02", "level": "FATAL", "message": "psycopg2.OperationalError: FATAL: password authentication failed for user \"checkout_svc\""}
+  ]
+}
