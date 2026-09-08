@@ -9,7 +9,9 @@ COPY worker/pyproject.toml worker/uv.lock ./worker/
 RUN cd worker && uv sync --frozen --no-install-project
 
 COPY shared ./shared
+COPY agents ./agents
 COPY worker ./worker
+COPY alembic.ini ./alembic.ini
 
 ENV PATH="/app/worker/.venv/bin:${PATH}"
 ENV PYTHONPATH=/app

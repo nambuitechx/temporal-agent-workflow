@@ -1,22 +1,22 @@
 import { useEffect, useState } from "react";
 import type { Scenario } from "@/types";
-import { listScenarios } from "@/lib/api";
+import { listDemoScenarios } from "@/lib/api";
 
 interface Props {
   onSubmit: (input: { description: string; scenarioId: string; maxIterations: number }) => Promise<void>;
   submitting: boolean;
-  lastIncidentId: string | null;
+  lastCaseId: string | null;
   error: string | null;
 }
 
-export function IncidentForm({ onSubmit, submitting, lastIncidentId, error }: Props) {
+export function IncidentForm({ onSubmit, submitting, lastCaseId, error }: Props) {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [scenarioIndex, setScenarioIndex] = useState(0);
   const [description, setDescription] = useState("");
   const [maxIterations, setMaxIterations] = useState(15);
 
   useEffect(() => {
-    listScenarios().then((res) => {
+    listDemoScenarios().then((res) => {
       setScenarios(res.scenarios);
       if (res.scenarios.length > 0) setDescription(res.scenarios[0].description);
     });
@@ -69,9 +69,9 @@ export function IncidentForm({ onSubmit, submitting, lastIncidentId, error }: Pr
         </button>
       </div>
 
-      {lastIncidentId && (
+      {lastCaseId && (
         <p className="muted">
-          Incident: <span className="incident-id">{lastIncidentId}</span>
+          Case: <span className="incident-id">{lastCaseId}</span>
         </p>
       )}
       {error && <p className="muted" style={{ color: "var(--danger)" }}>{error}</p>}

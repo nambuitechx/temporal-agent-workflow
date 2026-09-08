@@ -10,9 +10,9 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from shared.activities import ask_orchestrator, notify_human, run_agent
+from shared.activities import ask_orchestrator, get_usecase_limits, notify_human, run_agent
 from shared.models import TASK_QUEUE
-from shared.workflows import IncidentInvestigationWorkflow
+from shared.workflows import AgentLoopWorkflow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("worker")
@@ -38,8 +38,8 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[ask_orchestrator, run_agent, notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[ask_orchestrator, run_agent, notify_human, get_usecase_limits],
     )
     logger.info("Worker đã kết nối Temporal tại %s, polling task queue %r", address, TASK_QUEUE)
     await worker.run()

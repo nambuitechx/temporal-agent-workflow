@@ -65,6 +65,18 @@ select, textarea, input {
 
 textarea { resize: vertical; min-height: 60px; }
 
+/* checkbox phải loại khỏi rule `input { width:100% }` ở trên — nếu không nó
+   bị kéo giãn full-width + padding/border-radius của text input, vỡ layout
+   bất cứ chỗ nào có checkbox trong bảng (vd trang Deployed Agents, cột
+   read_only lúc edit inline). */
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+  flex: none;
+}
+
 button {
   cursor: pointer;
   border: none;
@@ -82,6 +94,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .row { display: flex; gap: 10px; margin-top: 14px; }
 .row > * { flex: 1; }
 
+/* Ô hành động trong bảng (nút "Chi tiết →", "Disable", ...) — KHÔNG dùng
+   .row ở đây: `.row > * { flex: 1 }` ép mỗi nút giãn hết cỡ, càng nhiều nút
+   càng đẩy cột/bảng tràn ngang. Nút chỉ rộng bằng nội dung, dồn phải, không
+   wrap xuống dòng. */
+.table-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.table-actions > * { flex: none; }
+
 .status-badge {
   display: inline-block;
   padding: 3px 10px;
@@ -96,6 +120,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .status-FINISHED { background: #123422; color: var(--ok); }
 .status-ESCALATED { background: #3a1414; color: var(--danger); }
 .status-IDLE { background: #24272e; color: var(--muted); }
+.status-active, .status-ready { background: #123422; color: var(--ok); }
+.status-disabled { background: #3a1414; color: var(--danger); }
+.status-draft { background: #3a2f10; color: var(--warn); }
 
 .timeline { list-style: none; margin: 0; padding: 0; }
 .timeline li {
@@ -134,3 +161,111 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .muted { color: var(--muted); font-size: 0.85rem; }
 .incident-id { font-family: ui-monospace, monospace; color: var(--accent); }
+
+/* --- Navbar (mục "quản lý usecase/agent" — router hash-based, ui/src/lib/router.ts) --- */
+.navbar {
+  display: flex;
+  gap: 4px;
+  padding: 10px 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.navbar a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px 8px 0 0;
+}
+.navbar a:hover { color: var(--text); }
+.navbar a.active { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-bottom: none; }
+
+.link-back {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.82rem;
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+main.stack {
+  display: block;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+main.stack > * + * { margin-top: 20px; }
+
+.stack > * + * { margin-top: 0; }
+
+.row.space-between { justify-content: space-between; align-items: center; }
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  margin-top: 12px;
+}
+.checkbox-label input { width: auto; }
+
+/* Bảng dài (ARN/local_tool_ref, agent_name...) không được đẩy vỡ layout
+   panel/page — cuộn ngang RIÊNG trong wrapper này, page/body không bao giờ
+   cuộn ngang. Luôn bọc `<table className="data-table">` trong
+   `<div className="table-scroll">`. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+  font-size: 0.85rem;
+}
+.data-table th, .data-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.data-table th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+/* Chuỗi dài (ARN/local_tool_ref) wrap trước, .table-scroll chỉ là fallback
+   khi wrap vẫn không đủ (vd 1 token cực dài không có chỗ ngắt). */
+.data-table code { font-family: ui-monospace, monospace; word-break: break-all; white-space: normal; }
+.data-table button { padding: 5px 10px; font-size: 0.8rem; background: #232833; color: var(--text); white-space: nowrap; }
+.data-table button.primary { background: var(--accent); color: white; }
+.data-table button.ok { background: var(--ok); color: #05170c; }
+/* input/select edit inline trong bảng không nên ép min-width theo width:100%
+   của rule chung — cho phép co lại nhỏ hơn nội dung cha khi cột hẹp. */
+.data-table input, .data-table select { min-width: 0; }
+
+.version-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.version-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #0d0f14;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+.version-pill.active { border-color: var(--accent); }
+.version-pill .tag {
+  font-size: 0.68rem;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 6px;
+}

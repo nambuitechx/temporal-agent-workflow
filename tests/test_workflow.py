@@ -1,10 +1,14 @@
-"""Test IncidentInvestigationWorkflow bằng Temporal test framework
-(time-skipping WorkflowEnvironment) — KHÔNG gọi Anthropic API thật.
+"""Test AgentLoopWorkflow bằng Temporal test framework (time-skipping
+WorkflowEnvironment) — KHÔNG gọi Bedrock/Postgres thật.
 
-3 Activity thật (ask_orchestrator/run_agent/notify_human) được thay bằng bản
-fake cùng tên/chữ ký cho mỗi test, để test đúng LOGIC của while-loop (mục 7 của
-POC design — Scenario A/B/C/D/E) một cách deterministic, tách biệt khỏi việc
-gọi LLM thật (phần đó verify thủ công qua Web UI, xem README.md).
+4 Activity thật (ask_orchestrator/run_agent/notify_human/get_usecase_limits)
+được thay bằng bản fake cùng tên/chữ ký cho mỗi test, để test đúng LOGIC của
+while-loop (mục 3/7 của docs/2026-09-08-generic-agent-loop-design.md —
+Scenario A/B/C/D/E) một cách deterministic, tách biệt khỏi việc gọi LLM/DB
+thật (phần đó verify thủ công qua Web UI, xem README.md). Vì mọi Activity đều
+fake, các test này KHÔNG cần Postgres chạy thật — `usecase_version_id` chỉ là
+1 chuỗi bất kỳ được các fake bỏ qua, không tra registry (registry.py có thể
+cần bộ test riêng seed DB thật, xem mục 8 bước 7 design doc — chưa làm ở đây).
 
 Có thêm 1 test regression (`test_legacy_finish_action_no_longer_completes_workflow`)
 khoá lại quyết định thiết kế: action "FINISH" đã bị loại khỏi allowlist — mọi
@@ -23,7 +27,9 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from shared.models import TASK_QUEUE
-from shared.workflows import IncidentInvestigationWorkflow
+from shared.workflows import AgentLoopWorkflow
+
+FAKE_USECASE_VERSION_ID = "00000000-0000-0000-0000-000000000001"
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -36,16 +42,25 @@ async def env():
 
 def _base_request(scenario_id: str = "scenario_a_checkout_payment_timeout", max_iterations: int = 15) -> dict:
     return {
-        "incident_id": f"test-{uuid.uuid4().hex[:8]}",
-        "description": "checkout-api trả lỗi 500",
-        "scenario_id": scenario_id,
+        "case_id": f"test-{uuid.uuid4().hex[:8]}",
+        "usecase_id": "incident_investigation",
+        "usecase_version_id": FAKE_USECASE_VERSION_ID,
+        "case_context": {"scenario_id": scenario_id, "description": "checkout-api trả lỗi 500"},
         "max_iterations": max_iterations,
     }
 
 
+def _fake_get_usecase_limits(max_iterations_cap: int = 30):
+    @activity.defn(name="get_usecase_limits")
+    async def fake(usecase_version_id: str) -> dict:
+        return {"default_max_iterations": 15, "max_iterations_cap": max_iterations_cap}
+
+    return fake
+
+
 async def _wait_for_status(handle, status: str, attempts: int = 30) -> None:
     for _ in range(attempts):
-        state = await handle.query(IncidentInvestigationWorkflow.get_state)
+        state = await handle.query(AgentLoopWorkflow.get_state)
         if state["status"] == status:
             return
     raise AssertionError(f"Workflow không đạt trạng thái {status!r} sau {attempts} lần query")
@@ -62,14 +77,14 @@ async def _wait_for_status(handle, status: str, attempts: int = 30) -> None:
 @pytest.mark.asyncio
 async def test_scenario_c_high_confidence_still_requires_hitl(env: WorkflowEnvironment):
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         return {
             "action": "NEEDS_HUMAN",
             "rca_proposal": {"hypothesis": "config lỗi", "confidence": 0.95, "supporting_evidence_refs": []},
         }
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:  # pragma: no cover
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:  # pragma: no cover
         raise AssertionError("Không cần gọi run_agent trong test này")
 
     notified = []
@@ -83,25 +98,25 @@ async def test_scenario_c_high_confidence_still_requires_hitl(env: WorkflowEnvir
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         # Dù confidence = 0.95, workflow phải dừng ở WAITING_HUMAN — KHÔNG
         # được tự FINISHED trước khi có signal approve/reject.
         await _wait_for_status(handle, "WAITING_HUMAN")
-        state = await handle.query(IncidentInvestigationWorkflow.get_state)
+        state = await handle.query(AgentLoopWorkflow.get_state)
         assert state["status"] == "WAITING_HUMAN"
-        assert state["rca_proposal"]["confidence"] == 0.95
+        assert state["proposal"]["confidence"] == 0.95
 
-        await handle.signal(IncidentInvestigationWorkflow.approve, "Đồng ý, evidence rõ ràng.")
+        await handle.signal(AgentLoopWorkflow.approve, "Đồng ý, evidence rõ ràng.")
         result = await handle.result()
 
     assert result["status"] == "FINISHED"
-    assert "config lỗi" in result["rca_proposal"]["hypothesis"]
-    assert notified and notified[0]["event"] == "RCA_APPROVED"
+    assert "config lỗi" in result["proposal"]["hypothesis"]
+    assert notified and notified[0]["event"] == "PROPOSAL_APPROVED"
 
 
 # ---------------------------------------------------------------------------
@@ -115,11 +130,11 @@ async def test_scenario_c_high_confidence_still_requires_hitl(env: WorkflowEnvir
 @pytest.mark.asyncio
 async def test_legacy_finish_action_no_longer_completes_workflow(env: WorkflowEnvironment):
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         return {"action": "FINISH", "final_answer": "should never be trusted anymore"}
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:  # pragma: no cover
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:  # pragma: no cover
         raise AssertionError("Không nên gọi run_agent trong test này")
 
     escalations = []
@@ -133,11 +148,11 @@ async def test_legacy_finish_action_no_longer_completes_workflow(env: WorkflowEn
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         result = await handle.result()
 
@@ -154,7 +169,7 @@ async def test_legacy_finish_action_no_longer_completes_workflow(env: WorkflowEn
 @pytest.mark.asyncio
 async def test_scenario_a_hitl_approve(env: WorkflowEnvironment):
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         return {
             "action": "NEEDS_HUMAN",
             "rca_proposal": {
@@ -165,7 +180,7 @@ async def test_scenario_a_hitl_approve(env: WorkflowEnvironment):
         }
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:  # pragma: no cover
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:  # pragma: no cover
         raise AssertionError("Không cần gọi run_agent trong test này")
 
     notified = []
@@ -179,18 +194,18 @@ async def test_scenario_a_hitl_approve(env: WorkflowEnvironment):
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         await _wait_for_status(handle, "WAITING_HUMAN")
-        await handle.signal(IncidentInvestigationWorkflow.approve, "Đủ căn cứ, đồng ý.")
+        await handle.signal(AgentLoopWorkflow.approve, "Đủ căn cứ, đồng ý.")
         result = await handle.result()
 
     assert result["status"] == "FINISHED"
-    assert notified and notified[0]["event"] == "RCA_APPROVED"
+    assert notified and notified[0]["event"] == "PROPOSAL_APPROVED"
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +220,7 @@ async def test_scenario_b_hitl_reject_then_continue(env: WorkflowEnvironment):
     call_count = {"n": 0}
 
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         call_count["n"] += 1
         if call_count["n"] == 1:
             return {
@@ -221,7 +236,7 @@ async def test_scenario_b_hitl_reject_then_continue(env: WorkflowEnvironment):
         }
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:  # pragma: no cover
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:  # pragma: no cover
         raise AssertionError("Không cần gọi run_agent trong test này")
 
     @activity.defn(name="notify_human")
@@ -232,46 +247,46 @@ async def test_scenario_b_hitl_reject_then_continue(env: WorkflowEnvironment):
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         await _wait_for_status(handle, "WAITING_HUMAN")
-        await handle.signal(IncidentInvestigationWorkflow.reject, "Chưa đủ bằng chứng, kiểm tra thêm.")
+        await handle.signal(AgentLoopWorkflow.reject, "Chưa đủ bằng chứng, kiểm tra thêm.")
 
         # Sau reject, workflow quay lại RUNNING rồi tới WAITING_HUMAN lần 2
         # (với hypothesis mới) — chờ đúng trạng thái đó trước khi approve.
         for _ in range(30):
-            state = await handle.query(IncidentInvestigationWorkflow.get_state)
-            if state["status"] == "WAITING_HUMAN" and state["rca_proposal"]["hypothesis"] == "giả thuyết 2":
+            state = await handle.query(AgentLoopWorkflow.get_state)
+            if state["status"] == "WAITING_HUMAN" and state["proposal"]["hypothesis"] == "giả thuyết 2":
                 break
         else:
             raise AssertionError("Không thấy WAITING_HUMAN lần 2 với hypothesis mới")
 
-        await handle.signal(IncidentInvestigationWorkflow.approve, "Đồng ý với giả thuyết 2.")
+        await handle.signal(AgentLoopWorkflow.approve, "Đồng ý với giả thuyết 2.")
         result = await handle.result()
 
     assert result["status"] == "FINISHED"
-    assert result["rca_proposal"]["hypothesis"] == "giả thuyết 2"
+    assert result["proposal"]["hypothesis"] == "giả thuyết 2"
     assert call_count["n"] == 2
 
 
 # ---------------------------------------------------------------------------
-# Scenario D — circuit breaker: vượt MAX_ITERATIONS -> ESCALATED
+# Scenario D — circuit breaker: vượt effective_max_iterations -> ESCALATED
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_scenario_d_circuit_breaker_max_iterations(env: WorkflowEnvironment):
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         # Orchestrator "không biết dừng" — luôn xin thêm evidence.
-        return {"action": "CALL_AGENT", "agent_name": "log_agent", "args": {}}
+        return {"action": "CALL_AGENT", "agent_name": "incident_investigation__log_agent", "args": {}}
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:
         return {"agent_name": agent_name, "summary": "vẫn chưa rõ", "evidence": []}
 
     escalations = []
@@ -285,17 +300,57 @@ async def test_scenario_d_circuit_breaker_max_iterations(env: WorkflowEnvironmen
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         result = await handle.result()
 
     assert result["status"] == "ESCALATED"
     assert escalations and escalations[0]["event"] == "ESCALATED"
     assert "MAX_ITERATIONS" in escalations[0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_caps_at_usecase_max_iterations_cap(env: WorkflowEnvironment):
+    """Defense-in-depth (mục 3 design doc): dù request xin max_iterations=100,
+    Workflow tự kẹp lại theo usecases.max_iterations_cap (ở đây fake = 1) —
+    không tin thẳng giá trị request."""
+
+    @activity.defn(name="ask_orchestrator")
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
+        return {"action": "CALL_AGENT", "agent_name": "incident_investigation__log_agent", "args": {}}
+
+    call_count = {"n": 0}
+
+    @activity.defn(name="run_agent")
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:
+        call_count["n"] += 1
+        return {"agent_name": agent_name, "summary": "vẫn chưa rõ", "evidence": []}
+
+    escalations = []
+
+    @activity.defn(name="notify_human")
+    async def fake_notify_human(payload: dict) -> str:
+        escalations.append(payload)
+        return "notified"
+
+    request = _base_request("scenario_d_max_iterations", max_iterations=100)
+    async with Worker(
+        env.client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits(max_iterations_cap=1)],
+    ):
+        handle = await env.client.start_workflow(
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
+        )
+        result = await handle.result()
+
+    assert result["status"] == "ESCALATED"
+    assert call_count["n"] == 1, "phải dừng sau đúng 1 iteration theo cap, bất kể request xin 100"
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +362,7 @@ async def test_scenario_d_circuit_breaker_max_iterations(env: WorkflowEnvironmen
 @pytest.mark.asyncio
 async def test_scenario_e_allowlist_violation_is_blocked(env: WorkflowEnvironment):
     @activity.defn(name="ask_orchestrator")
-    async def fake_ask_orchestrator(description: str, scenario_id: str, history: list[dict]) -> dict:
+    async def fake_ask_orchestrator(usecase_version_id: str, description: str, case_context: dict, history: list[dict]) -> dict:
         # Mô phỏng đúng hành vi guardrail thật của activities.ask_orchestrator:
         # validate và raise non_retryable nếu ngoài allowlist.
         raise ApplicationError(
@@ -317,7 +372,7 @@ async def test_scenario_e_allowlist_violation_is_blocked(env: WorkflowEnvironmen
         )
 
     @activity.defn(name="run_agent")
-    async def fake_run_agent(agent_name: str, args: dict, scenario_id: str) -> dict:  # pragma: no cover
+    async def fake_run_agent(usecase_version_id: str, agent_name: str, args: dict, case_context: dict) -> dict:  # pragma: no cover
         raise AssertionError("KHÔNG được thực thi run_agent với agent_name ngoài allowlist")
 
     escalations = []
@@ -331,11 +386,11 @@ async def test_scenario_e_allowlist_violation_is_blocked(env: WorkflowEnvironmen
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
-        workflows=[IncidentInvestigationWorkflow],
-        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human],
+        workflows=[AgentLoopWorkflow],
+        activities=[fake_ask_orchestrator, fake_run_agent, fake_notify_human, _fake_get_usecase_limits()],
     ):
         handle = await env.client.start_workflow(
-            IncidentInvestigationWorkflow.run, request, id=request["incident_id"], task_queue=TASK_QUEUE
+            AgentLoopWorkflow.run, request, id=request["case_id"], task_queue=TASK_QUEUE
         )
         result = await handle.result()
 

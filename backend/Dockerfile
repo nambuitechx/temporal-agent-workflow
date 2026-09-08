@@ -10,6 +10,7 @@ RUN cd backend && uv sync --frozen --no-install-project
 
 COPY shared ./shared
 COPY backend ./backend
+COPY alembic.ini ./alembic.ini
 
 ENV PATH="/app/backend/.venv/bin:${PATH}"
 ENV PYTHONPATH=/app

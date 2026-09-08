@@ -1,10 +1,10 @@
-import type { IncidentState } from "@/types";
+import type { CaseState } from "@/types";
 
 function formatContent(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content, null, 2);
 }
 
-export function ExecutionTrace({ state }: { state: IncidentState | null }) {
+export function ExecutionTrace({ state }: { state: CaseState | null }) {
   const status = state?.status ?? "IDLE";
 
   return (

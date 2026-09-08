@@ -22,9 +22,18 @@ thành 2 bảng (`agentcore_agents` + `usecase_agents`, mục 4) vì 1 agent
 AgentCore có thể được nhiều usecase khác nhau tái sử dụng, không thuộc về
 đúng 1 usecase — xem mục 0. Revision sau đó chốt cách xử lý mâu thuẫn
 immutability vs reuse phát sinh từ đó: `agentcore_agents` mutable, chặn update
-ở tầng ứng dụng khi còn case sống tham chiếu — xem mục 4. Revision gần nhất
-chốt quy ước đặt tên `usecase_agents.agent_name`: backend tự sinh
-`{usecase_key}__{agent_key}`, không nhận free-text — xem mục 4.
+ở tầng ứng dụng khi còn case sống tham chiếu — xem mục 4. Revision sau đó chốt
+quy ước đặt tên `usecase_agents.agent_name`: backend tự sinh
+`{usecase_key}__{agent_key}`, không nhận free-text — xem mục 4. Revision gần
+nhất, sau review, chốt thêm 4 điểm: (1) tên bảng SQLAlchemy phải override
+tường minh `__tablename__` snake_case số nhiều, không dựa vào default của
+`BaseTableModel` — xem mục 4; (2) giữ nguyên `created_by`/`updated_by` kế thừa
+từ `BaseTableModel` trên mọi bảng — xem mục 4; (3) circuit breaker
+`max_iterations_cap` phải được Workflow tự kiểm tra lại (defense-in-depth),
+không chỉ dựa vào backend clamp lúc tạo case — xem mục 3 và mục 5; (4)
+`usecase_versions` cần cột trạng thái "sẵn sàng dùng" tách khỏi `is_latest`,
+và bắt buộc có đúng 1 orchestrator trước khi chuyển sang trạng thái đó — xem
+mục 4.
 
 ---
 
@@ -183,6 +192,21 @@ hiện có (`args=[..., usecase_id, usecase_version_id]`), giống hệt cách
 ở đây là `usecases.usecase_key` (slug, không phải UUID) — `usecase_version_id`
 mới là UUID trỏ đúng 1 dòng `usecase_versions` (mục 4).
 
+**Circuit breaker phải tự kiểm tra lại `max_iterations_cap`, không chỉ tin
+backend.** Backend (`POST /cases`, mục 6) đã clamp `max_iterations` request
+theo `usecases.max_iterations_cap` lúc tạo case, nhưng đây là guardrail
+platform-wide (giống lý do `ALLOWED_ACTIONS` không nằm trong config usecase,
+mục 2) — không nên chỉ dựa vào đúng 1 lớp validate ở biên API, cùng nguyên
+tắc defense-in-depth đã áp dụng cho `agent_name` (`ask_orchestrator` +
+`run_agent` validate độc lập, mục 5). Cách làm: bước đầu `run()` gọi 1
+Activity registry mới (`get_usecase_limits`, mục 5) lấy `max_iterations_cap`
+theo `usecase_version_id`, rồi tính
+`effective_max_iterations = min(request.get("max_iterations", default), cap)`
+— dùng giá trị này thay `max_iterations` trong điều kiện while-loop, không
+dùng thẳng giá trị từ `request`. 1 lần gọi thêm mỗi case (không phải mỗi
+iteration), chi phí không đáng kể so với vòng lặp `ask_orchestrator`/
+`run_agent` vốn đã gọi Activity mỗi bước.
+
 ## 4. Lưu trữ: Postgres + Alembic + asyncpg (theo convention synaptix-platform)
 
 Thay vì `usecases/<id>/v<n>/manifest.yaml` trên filesystem, dùng 1 Postgres
@@ -205,7 +229,20 @@ shared/
 
 `BaseTableModel` copy nguyên tinh thần từ `app/models/base.py` bên
 synaptix-platform: `id: UUID` PK mặc định `uuid4()`, `created_at`/`updated_at`
-tự động, cùng `naming_convention` cho index/constraint. Dependencies thêm vào
+tự động, **`created_by`/`updated_by: UUID | None`** (giữ nguyên, không lược
+bớt — Activity chạy trong Worker không có identity người dùng nên các dòng
+Activity tự ghi (nếu có) sẽ luôn null; 2 cột này có giá trị thật khi ghi qua
+đường admin CRUD ở mục 6, nơi có identity người gọi API), cùng
+`naming_convention` cho index/constraint. Không liệt kê lại `created_by`/
+`updated_by` trong từng bảng ở dưới — mọi bảng kế thừa `BaseTableModel` đều có.
+
+**Lưu ý bắt buộc khi định nghĩa model:** `BaseTableModel.__tablename__` mặc
+định là `cls.__name__.lower()` (vd class `UsecaseVersion` → bảng
+`usecaseversion`), **không tự chèn `_`** cho tên nhiều từ. Mọi bảng dưới đây
+phải override `__tablename__` tường minh đúng tên snake_case số nhiều đã ghi
+(`usecases`, `usecase_versions`, `agentcore_agents`, `usecase_agents`) —
+không dựa vào default, nếu không migration Alembic sẽ sinh sai tên so với
+mô tả trong doc này. Dependencies thêm vào
 **cả** `worker/pyproject.toml` và `backend/pyproject.toml` (cả 2 process đều
 cần đọc DB — worker để activities tra registry, backend để CRUD usecase):
 `sqlalchemy`, `asyncpg`, `alembic`.
@@ -232,15 +269,37 @@ cần đọc DB — worker để activities tra registry, backend để CRUD use
 | `id` | uuid PK | đây là giá trị thực sự lưu vào `usecase_version_id` của Workflow input, không phải số `n` |
 | `usecase_id` | FK → `usecases.id` | |
 | `version_number` | int | tăng dần, unique theo `(usecase_id, version_number)`, chỉ để hiển thị/audit |
-| `is_latest` | bool | backend query dòng này khi resolve version cho case mới; đúng 1 dòng `is_latest=true` / usecase, enforce bằng partial unique index |
+| `is_latest` | bool | đúng 1 dòng `is_latest=true` / usecase, enforce bằng partial unique index |
+| `status` | enum(`draft`,`ready`) | mới — tách khỏi `is_latest`. `draft` = đang gán agent, chưa dùng được cho case mới; `ready` = đã qua validate (ít nhất 1 orchestrator, xem dưới), backend cho phép resolve khi tạo case. `is_latest=true` không tự nghĩa là dùng được — 1 version mới tạo mặc định `draft`, admin phải chuyển sang `ready` tường minh (mục 6) |
 | `created_at` | timestamptz | |
 
-Sau khi 1 `usecase_versions` row được tạo, **không được update** các
-`usecase_agents` thuộc nó nữa — sửa gì cũng tạo version mới (`version_number
-+ 1`, set `is_latest=true`, hạ cờ version cũ xuống `false`). Đây là nguyên
-tắc "version là snapshot bất biến" thay cho "version là thư mục vật lý" ở
-bản thảo filesystem trước, cùng lý do: case đang `WAITING_HUMAN` phải luôn
-audit lại đúng config đã dùng lúc start, không bị đổi giữa chừng.
+Sau khi 1 `usecase_versions` row **chuyển sang `status='ready'`**, không được
+update các `usecase_agents` thuộc nó nữa — sửa gì cũng tạo version mới
+(`version_number + 1`, trạng thái `draft` ban đầu, set `is_latest=true`, hạ cờ
+version cũ xuống `false`). Trong lúc còn `draft`, admin được sửa
+`usecase_agents` của version đó thoải mái (đang cấu hình, chưa có case nào
+tham chiếu tới). Đây là nguyên tắc "version là snapshot bất biến" thay cho
+"version là thư mục vật lý" ở bản thảo filesystem trước, cùng lý do: case
+đang `WAITING_HUMAN` phải luôn audit lại đúng config đã dùng lúc start, không
+bị đổi giữa chừng.
+
+**Ràng buộc "phải có orchestrator" khi gán nhiều agent.** Partial unique
+index ở bảng `usecase_agents` (dưới) chỉ chặn **nhiều hơn 1** dòng
+`kind='orchestrator'` cho cùng 1 version, không chặn **0** dòng — 1 version
+gán toàn `subagent`, không có orchestrator, vẫn hợp lệ ở tầng DB, và
+`get_orchestrator()` (mục 5) sẽ không tra được gì lúc chạy, lỗi runtime khó
+hiểu thay vì lỗi rõ ràng lúc cấu hình. Quy tắc chốt: 1 version có thể được
+gán 1 hoặc nhiều agent; nếu tổng số agent gán vào version đó từ 2 trở lên,
+bắt buộc phải có ít nhất 1 dòng `kind='orchestrator'` trong số đó (trường
+hợp version chỉ gán đúng 1 agent, chính agent đó phải là orchestrator — ứng
+với 1 usecase tối giản không có subagent, Orchestrator tự đề xuất RCA không
+cần `CALL_AGENT`). Ràng buộc này **enforce ở tầng ứng dụng, không phải DB
+constraint** (giống lý do chọn tầng ứng dụng cho việc chặn update
+`agentcore_agents` ở trên — Postgres không tự biết "đủ" hay chưa theo nghĩa
+nghiệp vụ), tại đúng thời điểm admin chuyển `status` từ `draft` sang `ready`
+(mục 6): backend từ chối chuyển trạng thái nếu chưa thoả điều kiện trên. Đây
+cũng là lý do tách `status` khỏi `is_latest` — `is_latest` chỉ nói "version
+mới nhất", không nói "đã cấu hình xong, dùng được".
 
 **Quyết định:** bất biến "pin theo version" ở trên chỉ đứng vững nếu
 `agentcore_agents` (bảng identity, mục dưới) cũng không bị sửa tại chỗ khi
@@ -334,7 +393,14 @@ dependency, ở đây Activity không có DI nên tự gọi
 async def get_orchestrator(usecase_version_id: uuid.UUID) -> ResolvedAgent: ...
 async def get_agent(usecase_version_id: uuid.UUID, agent_name: str) -> ResolvedAgent | None: ...
 async def list_allowed_agents(usecase_version_id: uuid.UUID) -> set[str]: ...
+async def get_usecase_limits(usecase_version_id: uuid.UUID) -> UsecaseLimits: ...
 ```
+
+`UsecaseLimits` (mới) chỉ mang `max_iterations_cap` (join `usecase_versions`
+→ `usecases`) — dùng cho check defense-in-depth ở mục 3. Gọi 1 lần lúc
+`run()` bắt đầu qua 1 Activity riêng (không gộp vào `get_orchestrator` vì
+2 việc khác mục đích: 1 cái resolve identity agent, 1 cái resolve giới hạn
+platform-wide).
 
 `ResolvedAgent` là kết quả join `usecase_agents` (tên logic, `kind`, override
 timeout/retry nếu có) với `agentcore_agents` (ARN/`local_tool_ref`,
@@ -362,18 +428,26 @@ nhắc thêm cache ngắn hạn (TTL vài giây) nếu tần suất gọi Activi
 ## 6. Backend/API
 
 - `GET /scenarios` → `GET /usecases`: list `usecases` (status=active) +
-  `usecase_versions` mới nhất, để UI tự build dropdown thay vì hardcode
-  `SCENARIOS` như `backend/main.py` hiện tại.
+  `usecase_versions` mới nhất **có `status='ready'`**, để UI tự build
+  dropdown thay vì hardcode `SCENARIOS` như `backend/main.py` hiện tại. Version
+  đang `draft` không xuất hiện ở đây dù `is_latest=true`.
 - `POST /incidents` → `POST /cases`: nhận `usecase_key` (backend tự resolve
-  `usecase_versions` có `is_latest=true` → lấy `id` làm `usecase_version_id`
-  nhúng vào workflow input), `case_context` thay `scenario_id`.
+  `usecase_versions` có `is_latest=true` **và `status='ready'`** → lấy `id`
+  làm `usecase_version_id` nhúng vào workflow input; không tìm được version
+  nào thoả cả 2 điều kiện → 409, chưa có version nào dùng được cho usecase
+  này), `case_context` thay `scenario_id`.
 - `GET/POST /incidents/{id}/...` → `.../cases/{id}/...`, không đổi logic.
 - Thêm nhóm endpoint admin CRUD cho `usecases`/`usecase_versions`/
   `usecase_agents` (tạo usecase mới, tạo version mới, gán agent nào cho
   version nào — request chỉ cần `agent_id` + `kind`, KHÔNG nhận `agent_name`:
   backend tự sinh theo quy tắc `{usecase_key}__{agent_key}` ở mục 4, trả về
   trong response để admin UI hiển thị/copy vào prompt Orchestrator) — thay
-  thế việc "thêm file YAML" bằng "gọi API/thao tác trên UI quản trị".
+  thế việc "thêm file YAML" bằng "gọi API/thao tác trên UI quản trị". Riêng
+  version có thêm `POST /usecase-versions/{id}/publish` — chuyển
+  `status: draft → ready`; backend validate đúng 1 `kind='orchestrator'` đã
+  gán (mục 4) trước khi cho publish, trả 400 kèm lý do nếu chưa thoả (vd
+  "chưa gán orchestrator"). Publish rồi thì `usecase_agents` của version đó
+  bị khoá sửa như mô tả ở mục 4.
 - Thêm nhóm endpoint admin CRUD **riêng** cho `agentcore_agents` (đăng ký 1
   agent mới, gán/đổi ARN AgentCore của nó) — tách khỏi CRUD usecase phía trên
   vì đây là vòng đời khác nhau: đăng ký 1 agent làm 1 lần, gán nó vào N
@@ -410,12 +484,17 @@ ghi trong docstring `shared/workflows.py`.
    `metrics_agent`, mỗi dòng `local_tool_ref` trỏ đường dẫn mới ở bước 1,
    `agentcore_agent_arn=null`), 1 dòng `usecases`
    (`usecase_key=incident_investigation`), 1 dòng `usecase_versions`
-   (`version_number=1`, `is_latest=true`), và 3 dòng `usecase_agents` nối
-   version đó với 3 agent ở trên (`kind=orchestrator`/`subagent` tương ứng).
+   (`version_number=1`, `is_latest=true`, `status=ready` — seed thẳng thành
+   ready vì đây là dữ liệu đã biết hợp lệ, không đi qua endpoint publish),
+   và 3 dòng `usecase_agents` nối version đó với 3 agent ở trên
+   (`kind=orchestrator`/`subagent` tương ứng, đúng 1 dòng `orchestrator`).
 4. Refactor `shared/workflows.py`: đổi tên field, thêm `usecase_id`/
-   `usecase_version_id` vào request, không đổi logic control-flow.
+   `usecase_version_id` vào request, gọi thêm activity resolve
+   `UsecaseLimits` lúc bắt đầu `run()` để tính `effective_max_iterations`
+   (mục 3) — phần còn lại của logic control-flow không đổi.
 5. Refactor `shared/activities.py`: thay hardcode bằng
-   `shared/db/registry.py` lookup.
+   `shared/db/registry.py` lookup, thêm activity mới cho
+   `get_usecase_limits` (mục 5).
 6. Refactor `backend/main.py`: đổi endpoint, thêm CRUD admin, đọc usecase
    list từ Postgres thay vì `SCENARIOS` hardcode.
 7. `tests/test_workflow.py` giữ nguyên cách mock activity (fake theo tên) —
@@ -466,6 +545,17 @@ tồn tại: tách "định danh nguồn lực dùng chung" (connector; agent) r
 - Thiết kế chi tiết endpoint admin CRUD cho `usecases`/`usecase_versions`/
   `usecase_agents`/`agentcore_agents` (mục 6) — ai được phép sửa, có cần
   approval flow khi gán lại `agentcore_agent_arn` cho 1 agent hay không.
+- **[Đã chốt]** `usecase_versions` có cột `status` (`draft`/`ready`) tách
+  khỏi `is_latest`, và bắt buộc đúng 1 `kind='orchestrator'` trước khi
+  publish sang `ready` (mục 4, mục 6). Còn lại chưa xử lý: version bị
+  "publish nhầm" có cách nào revert về `draft` không, hay chỉ có đường tạo
+  version mới — hiện doc chưa có endpoint unpublish.
+- **[Đã chốt]** Circuit breaker tự kiểm tra lại `max_iterations_cap` trong
+  Workflow (defense-in-depth), không chỉ tin backend clamp lúc tạo case —
+  mục 3, mục 5 (`get_usecase_limits`).
+- **[Đã chốt]** Tên bảng SQLAlchemy override tường minh (không dùng default
+  `cls.__name__.lower()` của `BaseTableModel`), và giữ nguyên `created_by`/
+  `updated_by` trên mọi bảng — mục 4.
 - **[Đã chốt]** Quy ước đặt tên `usecase_agents.agent_name`: backend tự sinh
   `{usecase_key}__{agent_key}`, không nhận free-text từ admin UI — chi tiết
   ở mục 4. Còn lại chưa xử lý: ca cần liên kết cùng 1 agent 2 lần vào cùng 1

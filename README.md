@@ -1,9 +1,15 @@
-# Xora POC — Dynamic Agent Loop + Multi-Agent + HITL
+# Xora POC — Generic Agent Loop + Multi-Agent + HITL
 
-Implementation của [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md).
-Đây là bản chạy được của pattern **While-Loop + Orchestrator Agent** (xem
+Implementation của [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md)
+(pattern gốc **While-Loop + Orchestrator Agent**, xem
 [../agent-workflow/Dynamic Agent Loop Orchestration.md](../agent-workflow/Dynamic%20Agent%20Loop%20Orchestration.md)),
-thu nhỏ từ ý tưởng "Incident Investigation Runtime" của Xora Resolve.
+đã generic hoá theo [docs/2026-09-08-generic-agent-loop-design.md](docs/2026-09-08-generic-agent-loop-design.md):
+Workflow/Activity không còn hardcode cho usecase "Incident Investigation" —
+usecase/agent nào tồn tại giờ là dữ liệu trong Postgres, xem
+[CLAUDE.md](CLAUDE.md) để hiểu kiến trúc hiện tại trước khi đọc phần bên dưới
+(phần lớn nội dung README này viết ở giai đoạn trước generic hoá — tên
+`incident_id`/scenario A-E vẫn còn đúng vì đó vẫn là usecase demo duy nhất đã
+seed, chỉ endpoint/tên field đã đổi, xem bảng ở cuối mục "Chạy thử").
 
 Stack: **uv** (backend + worker, Python) + **Vite/React/TypeScript** (UI) +
 **AWS Bedrock** (Claude 3.5 Sonnet, gọi trực tiếp bằng AWS SDK/boto3 — không
@@ -18,9 +24,15 @@ key riêng). Đã verify build + chạy thật qua Docker (xem
    được enable trong **Bedrock Model Access** ở region bạn dùng.
 2. Copy `.env.example` thành `.env`, chỉnh `AWS_PROFILE`/`AWS_REGION`/
    `BEDROCK_MODEL_ID` cho khớp.
-3. `docker compose up --build`
-4. Mở:
-   - **Web UI**: http://localhost:3000 — submit incident, xem trace realtime, approve/reject.
+3. `make run` (= `docker compose up -d --build`) — giờ có thêm service
+   `postgres` (registry control-plane, mục 4 của
+   [design doc generic hoá](docs/2026-09-08-generic-agent-loop-design.md)).
+4. **Bắt buộc chạy 1 lần trước khi submit case đầu tiên**:
+   `make migrate` (tạo schema) rồi `make seed` (tạo usecase
+   `incident_investigation` + 3 agent) — không làm bước này thì `POST /cases`
+   trả 409 vì chưa có `usecase_version` nào `status=ready`.
+5. Mở:
+   - **Web UI**: http://localhost:3000 — submit case, xem trace realtime, approve/reject.
    - **Backend API** (FastAPI docs): http://localhost:8000/docs
    - **Temporal Web UI** (Event History, replay): http://localhost:8233
 
@@ -28,6 +40,18 @@ Trong Web UI: chọn 1 trong 5 scenario ở dropdown (mô tả incident tự đi
 scenario, xem [mục 2 của design doc](docs/2026-09-07-poc-design-dynamic-agent-loop.md#2-kịch-bản-demo)),
 bấm **Submit incident**, theo dõi timeline cập nhật mỗi 1.5s. Khi status
 chuyển `WAITING_HUMAN`, panel Approve/Reject hiện ra.
+
+> **Endpoint đã đổi tên sau generic hoá** — nếu bạn đọc phần README bên dưới
+> thấy nhắc `/incidents`, `incident_id`, `rca_proposal`, `evidence`, đó là
+> nội dung viết trước khi generic hoá (mục 8 bước 6 design doc); endpoint
+> thật hiện tại: `GET /scenarios` → `GET /demo-scenarios` (UI-only, xem
+> `backend/main.py::DEMO_SCENARIOS`) hoặc `GET /usecases` (registry thật),
+> `POST /incidents` → `POST /cases` (body thêm field `usecase_key` cố định
+> `"incident_investigation"`, `scenario_id`/`description` giờ nằm trong
+> `case_context`), `GET/POST /incidents/{id}/...` → `.../cases/{id}/...`,
+> field response `incident_id`/`rca_proposal`/`evidence` →
+> `case_id`/`proposal`/`artifacts`. Workflow ID giờ có tiền tố `case-` thay
+> vì `incident-`.
 
 > Lưu ý: Scenario B dùng chung `scenario_id` với A (data giống nhau) — để test
 > nhánh reject, cứ submit rồi bấm **Reject** thay vì **Approve** khi tới bước
@@ -189,36 +213,48 @@ và worker chạy riêng (`cd worker && uv sync && uv run python main.py`).
 
 ```bash
 docker run --rm -v "$PWD":/app -w /app python:3.12-slim bash -c "
-  pip install temporalio==1.9.0 boto3==1.35.99 pytest==8.3.4 pytest-asyncio==0.24.0 &&
+  pip install temporalio==1.9.0 sqlalchemy==2.0.36 asyncpg==0.30.0 pytest==8.3.4 pytest-asyncio==0.24.0 &&
   PYTHONPATH=/app python -m pytest tests/ -v
 "
 ```
 
-6 test: 5 test tương ứng 5 scenario ở mục 2 của design doc + 1 test regression
-(`test_legacy_finish_action_no_longer_completes_workflow`) khoá lại việc action
-`FINISH` đã bị loại khỏi allowlist — mock cả 3 Activity
-(`ask_orchestrator`/`run_agent`/`notify_human`) để test đúng LOGIC của
-while-loop bằng Temporal time-skipping test framework — không gọi model thật.
+7 test: 5 test tương ứng 5 scenario ở mục 2 của design doc gốc + 2 test
+regression — (1) `test_legacy_finish_action_no_longer_completes_workflow`
+khoá lại việc action `FINISH` đã bị loại khỏi allowlist; (2)
+`test_circuit_breaker_caps_at_usecase_max_iterations_cap` khoá lại defense-in-depth
+check ở mục 3 của [design doc generic hoá](docs/2026-09-08-generic-agent-loop-design.md)
+(Workflow tự kẹp `max_iterations` theo `usecases.max_iterations_cap`, không
+tin thẳng giá trị request). Mock cả 4 Activity
+(`ask_orchestrator`/`run_agent`/`notify_human`/`get_usecase_limits`) để test
+đúng LOGIC của while-loop bằng Temporal time-skipping test framework — không
+gọi model thật, không cần Postgres chạy thật (mọi Activity đều fake, không
+đụng `shared/db/registry.py`).
 
 ## Kiến trúc thư mục
 
 ```text
-docker-compose.yml      # temporal + worker + backend + ui
-shared/                 # code dùng chung giữa worker & backend
-  models.py              # allowlist/hằng số dùng chung (guardrail)
-  workflows.py           # IncidentInvestigationWorkflow (while-loop + HITL signal)
-  activities.py          # ask_orchestrator / run_agent / notify_human (gọi Bedrock qua boto3)
-  agents/                # system prompt của Orchestrator + 2 Specialized Agent
-  tools/                 # Fake Tool Layer — đọc fake data thay vì gọi API thật
-  data/scenarios/        # fake log/metrics data, 1 bộ riêng cho mỗi scenario
-worker/                 # container Worker — đăng ký Workflow+Activities, uv (pyproject.toml + uv.lock)
-backend/                # container Backend — FastAPI, Temporal Client mỏng, uv (pyproject.toml + uv.lock)
+docker-compose.yml      # temporal + postgres + worker + backend + ui
+agents/                 # source code agent (prompt + fake-tool), độc lập shared/
+  _common/llm.py          # helper gọi Bedrock Converse API, dùng chung mọi agent
+  log_agent/               metrics_agent/               incident_investigation_orchestrator/
+    prompt.md              tool.py::run(args, case_context) -> dict
+shared/                 # code Temporal runtime, dùng chung giữa worker & backend
+  models.py              # ALLOWED_ACTIONS/TASK_QUEUE — runtime-only, KHÔNG có allowlist agent nữa
+  workflows.py           # AgentLoopWorkflow (generic while-loop + HITL signal)
+  activities.py          # ask_orchestrator/run_agent/notify_human/get_usecase_limits — tra registry, KHÔNG hardcode agent
+  db/                    # session.py + models.py (SQLAlchemy) + registry.py + seed.py
+  alembic/                # migration schema (usecases/usecase_versions/agentcore_agents/usecase_agents)
+  data/scenarios/        # fake log/metrics data — vẫn ở shared/, đọc bởi agents/*/tool.py
+worker/                 # container Worker — đăng ký Workflow+4 Activities, uv (pyproject.toml + uv.lock)
+backend/                # container Backend — Temporal Client mỏng + CRUD admin registry, uv
 ui/                     # container UI — Vite + React + TypeScript, build tĩnh, serve qua nginx (proxy /api)
-tests/                  # test workflow logic (time-skipping, mock activities)
+tests/                  # test workflow logic (time-skipping, mock activities, không cần Postgres)
 ```
 
 Xem giải thích đầy đủ (vì sao tách như vậy, cái gì rút gọn so với kiến trúc
-thật) ở [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md).
+thật) ở [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md)
+(pattern gốc) và [docs/2026-09-08-generic-agent-loop-design.md](docs/2026-09-08-generic-agent-loop-design.md)
+(runtime/domain split — kiến trúc hiện tại của repo).
 
 ## Vì sao AWS Bedrock (gọi trực tiếp bằng boto3) thay vì Anthropic API
 

@@ -22,6 +22,25 @@ services:
       timeout: 5s
       retries: 20
 
+  # Postgres control-plane cho registry (usecases/usecase_versions/
+  # agentcore_agents/usecase_agents) — tách biệt hoàn toàn với SQLite nội bộ
+  # của `temporal` (mục 4 của docs/2026-09-08-generic-agent-loop-design.md).
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=xora
+      - POSTGRES_PASSWORD=xora
+      - POSTGRES_DB=xora_agent_loop
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xora -d xora_agent_loop"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   worker:
     build:
       context: .
@@ -29,8 +48,11 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
+      - DATABASE_URL=postgresql+asyncpg://xora:xora@postgres:5432/xora_agent_loop
       # Model AI qua AWS Bedrock (KHÔNG dùng ANTHROPIC_API_KEY) — xác thực bằng
       # AWS credentials mount read-only từ host bên dưới. AWS_PROFILE trỏ tới
       # 1 profile có sẵn trong ~/.aws/credentials của bạn (mặc định "default").
@@ -53,10 +75,13 @@ services:
     depends_on:
       temporal:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
+      - DATABASE_URL=postgresql+asyncpg://xora:xora@postgres:5432/xora_agent_loop
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
@@ -75,3 +100,4 @@ services:
 
 volumes:
   temporal-data:
+  postgres-data:

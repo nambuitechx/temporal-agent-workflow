@@ -1,3 +1,9 @@
 temporalio==1.9.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
+# shared/workflows.py -> shared/activities.py -> shared/db/registry.py import
+# sqlalchemy/asyncpg ngay ở module load time (qua imports_passed_through) dù
+# các test này không tự query Postgres (mọi Activity đều fake) — cần cài để
+# import không lỗi.
+sqlalchemy==2.0.36
+asyncpg==0.30.0
