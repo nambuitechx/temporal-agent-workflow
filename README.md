@@ -1,6 +1,6 @@
 # Xora POC — Dynamic Agent Loop + Multi-Agent + HITL
 
-Implementation của [POC Design - Dynamic Agent Loop.md](POC%20Design%20-%20Dynamic%20Agent%20Loop.md).
+Implementation của [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md).
 Đây là bản chạy được của pattern **While-Loop + Orchestrator Agent** (xem
 [../agent-workflow/Dynamic Agent Loop Orchestration.md](../agent-workflow/Dynamic%20Agent%20Loop%20Orchestration.md)),
 thu nhỏ từ ý tưởng "Incident Investigation Runtime" của Xora Resolve.
@@ -25,7 +25,7 @@ key riêng). Đã verify build + chạy thật qua Docker (xem
    - **Temporal Web UI** (Event History, replay): http://localhost:8233
 
 Trong Web UI: chọn 1 trong 5 scenario ở dropdown (mô tả incident tự điền theo
-scenario, xem [mục 2 của design doc](POC%20Design%20-%20Dynamic%20Agent%20Loop.md#2-kịch-bản-demo)),
+scenario, xem [mục 2 của design doc](docs/2026-09-07-poc-design-dynamic-agent-loop.md#2-kịch-bản-demo)),
 bấm **Submit incident**, theo dõi timeline cập nhật mỗi 1.5s. Khi status
 chuyển `WAITING_HUMAN`, panel Approve/Reject hiện ra.
 
@@ -41,7 +41,7 @@ chuyển `WAITING_HUMAN`, panel Approve/Reject hiện ra.
 Khác với Scenario E (có test hook, không gọi Bedrock), 4 scenario này gọi
 **model thật** — sẽ phát sinh chi phí Bedrock (nhỏ, vài request/scenario) và
 cần AWS credentials + Model Access hợp lệ. Làm theo thứ tự dưới đây, kiểm tra
-lại kết quả với đúng phần "Verify" tương ứng ở [mục 2 của design doc](POC%20Design%20-%20Dynamic%20Agent%20Loop.md#2-kịch-bản-demo)
+lại kết quả với đúng phần "Verify" tương ứng ở [mục 2 của design doc](docs/2026-09-07-poc-design-dynamic-agent-loop.md#2-kịch-bản-demo)
 trước khi kết luận scenario đó pass.
 
 ### 0. Chuẩn bị
@@ -118,7 +118,7 @@ trong `get_state()`, đó là bằng chứng Temporal thực sự "đóng băng"
    `metrics_agent`, rồi 1 lần `orchestrator` nữa với `action: NEEDS_HUMAN` và
    `rca_proposal.confidence` (mô hình tự chấm — con số này giờ **chỉ mang
    tính tham khảo**, không còn quyết định có cần HITL hay không, vì action
-   `FINISH` đã bị loại khỏi allowlist — xem [mục 2 của design doc](POC%20Design%20-%20Dynamic%20Agent%20Loop.md#2-kịch-bản-demo)).
+   `FINISH` đã bị loại khỏi allowlist — xem [mục 2 của design doc](docs/2026-09-07-poc-design-dynamic-agent-loop.md#2-kịch-bản-demo)).
 3. Khi status chuyển `WAITING_HUMAN`, panel Approve/Reject hiện ra → bấm
    **Approve** kèm ghi chú bất kỳ.
 4. **Verify pass**: status cuối = `FINISHED` (chỉ sau khi bạn bấm Approve —
@@ -218,7 +218,7 @@ tests/                  # test workflow logic (time-skipping, mock activities)
 ```
 
 Xem giải thích đầy đủ (vì sao tách như vậy, cái gì rút gọn so với kiến trúc
-thật) ở [POC Design - Dynamic Agent Loop.md](POC%20Design%20-%20Dynamic%20Agent%20Loop.md).
+thật) ở [docs/2026-09-07-poc-design-dynamic-agent-loop.md](docs/2026-09-07-poc-design-dynamic-agent-loop.md).
 
 ## Vì sao AWS Bedrock (gọi trực tiếp bằng boto3) thay vì Anthropic API
 
@@ -331,4 +331,4 @@ Scenario C (trước đây tên "Auto-finish, confidence cao") đã được đ�
 lại thành **"Evidence rất rõ ràng — vẫn PHẢI qua HITL"** — verify đúng invariant
 mới: dù confidence cao cỡ nào, hệ thống không bao giờ tự động kết thúc mà
 không có signal. Xem đầy đủ rationale + cảnh báo thiết kế ở
-[mục 2 của design doc](POC%20Design%20-%20Dynamic%20Agent%20Loop.md#2-kịch-bản-demo).
+[mục 2 của design doc](docs/2026-09-07-poc-design-dynamic-agent-loop.md#2-kịch-bản-demo).

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A runnable POC implementing the **While-Loop + Orchestrator Agent** dynamic
-agent loop pattern (design doc: `POC Design - Dynamic Agent Loop.md`), scaled
+agent loop pattern (design doc: `docs/2026-09-07-poc-design-dynamic-agent-loop.md`), scaled
 down from Xora Resolve's "Incident Investigation Runtime" idea. An LLM
 Orchestrator investigates a fake incident by calling Specialized Agents
 (`log_agent`, `metrics_agent`), proposes an RCA, and **must always** wait for
