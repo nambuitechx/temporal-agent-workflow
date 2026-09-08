@@ -428,14 +428,27 @@ nhắc thêm cache ngắn hạn (TTL vài giây) nếu tần suất gọi Activi
 ## 6. Backend/API
 
 - `GET /scenarios` → `GET /usecases`: list `usecases` (status=active) +
-  `usecase_versions` mới nhất **có `status='ready'`**, để UI tự build
-  dropdown thay vì hardcode `SCENARIOS` như `backend/main.py` hiện tại. Version
-  đang `draft` không xuất hiện ở đây dù `is_latest=true`.
+  `usecase_versions` **READY có `version_number` lớn nhất** (không phải
+  `is_latest`, xem sửa lỗi dưới), để UI tự build dropdown thay vì hardcode
+  `SCENARIOS` như `backend/main.py` hiện tại.
 - `POST /incidents` → `POST /cases`: nhận `usecase_key` (backend tự resolve
-  `usecase_versions` có `is_latest=true` **và `status='ready'`** → lấy `id`
-  làm `usecase_version_id` nhúng vào workflow input; không tìm được version
-  nào thoả cả 2 điều kiện → 409, chưa có version nào dùng được cho usecase
-  này), `case_context` thay `scenario_id`.
+  `usecase_versions` READY có `version_number` lớn nhất → lấy `id` làm
+  `usecase_version_id` nhúng vào workflow input; không có version nào ready
+  → 409), `case_context` thay `scenario_id`.
+
+  **[Sửa lỗi phát hiện lúc vận hành]** Bản thảo đầu yêu cầu **đồng thời**
+  `is_latest=true` VÀ `status='ready'` để resolve version cho case mới — sai:
+  tạo 1 version draft mới (v2) — thao tác quản trị hoàn toàn hợp lệ trong lúc
+  v1 vẫn `ready` — khiến `is_latest` chuyển ngay sang v2 (chưa publish), và
+  vì không còn version nào thoả *cả hai* điều kiện, `POST /cases` trả 409
+  ngay lập tức dù v1 (ready) vẫn là 1 config hoàn toàn dùng được. `is_latest`
+  chỉ nên mang nghĩa "bản mới nhất để admin sửa tiếp" (dùng ở
+  `UsecaseDetailScreen` để mặc định chọn version nào hiển thị), KHÔNG phải
+  "bản duy nhất được phép chạy case". Đã sửa: resolve version READY có
+  `version_number` lớn nhất, độc lập với `is_latest` — case mới tiếp tục
+  dùng v1 cho tới khi v2 thật sự publish thành `ready` (lúc đó v2 mới có
+  `version_number` lớn nhất trong tập READY, tự động thay thế v1 mà không
+  cần thao tác gì thêm).
 - `GET/POST /incidents/{id}/...` → `.../cases/{id}/...`, không đổi logic.
 - Thêm nhóm endpoint admin CRUD cho `usecases`/`usecase_versions`/
   `usecase_agents` (tạo usecase mới, tạo version mới, gán agent nào cho

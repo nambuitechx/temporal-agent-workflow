@@ -119,18 +119,22 @@ class ApprovalRequest(BaseModel):
 
 @app.get("/usecases")
 async def list_usecases(db: AsyncSession = Depends(get_db)):
-    """Chỉ trả usecase active + version mới nhất CÓ status='ready' — version
-    đang draft không xuất hiện ở đây dù is_latest=true (mục 6 design doc)."""
+    """Chỉ trả usecase active + version READY **mới nhất theo version_number**
+    — KHÔNG bắt buộc phải trùng với `is_latest` (sửa lỗi thực tế: tạo 1 draft
+    version mới, hợp lệ về nghiệp vụ, không được phép khoá luôn việc submit
+    case đang dùng version ready trước đó chỉ vì draft mới đã "cướp" cờ
+    is_latest — `is_latest` chỉ có nghĩa "bản mới nhất để admin sửa tiếp",
+    không phải "bản duy nhất được phép chạy case"). Xem cùng logic ở
+    `_resolve_ready_version`."""
     usecases = (await db.execute(select(Usecase).where(Usecase.status == UsecaseStatus.ACTIVE))).scalars().all()
     out = []
     for uc in usecases:
         version = (
             await db.execute(
-                select(UsecaseVersion).where(
-                    UsecaseVersion.usecase_id == uc.id,
-                    UsecaseVersion.is_latest.is_(True),
-                    UsecaseVersion.status == UsecaseVersionStatus.READY,
-                )
+                select(UsecaseVersion)
+                .where(UsecaseVersion.usecase_id == uc.id, UsecaseVersion.status == UsecaseVersionStatus.READY)
+                .order_by(UsecaseVersion.version_number.desc())
+                .limit(1)
             )
         ).scalar_one_or_none()
         if version is None:
@@ -150,6 +154,14 @@ async def list_usecases(db: AsyncSession = Depends(get_db)):
 
 
 async def _resolve_ready_version(db: AsyncSession, usecase_key: str) -> tuple[Usecase, UsecaseVersion]:
+    """Resolve version READY **mới nhất theo version_number** cho case mới —
+    KHÔNG bắt buộc `is_latest=true`. Lý do (sự cố thực tế đã gặp): 1 admin tạo
+    version draft mới (v2) trong lúc v1 vẫn đang ready — is_latest chuyển
+    sang v2 ngay lập tức dù v2 chưa publish được. Nếu bắt buộc
+    `is_latest AND ready`, hành động quản trị hoàn toàn hợp lệ này (tạo
+    version mới để chỉnh sửa dần) sẽ khoá đứt việc submit case cho tới khi v2
+    publish xong — sai, vì v1 vẫn là 1 config hoàn toàn dùng được. Case mới
+    phải tiếp tục dùng v1 cho tới khi v2 thật sự publish (ready)."""
     usecase = (
         await db.execute(select(Usecase).where(Usecase.usecase_key == usecase_key, Usecase.status == UsecaseStatus.ACTIVE))
     ).scalar_one_or_none()
@@ -157,11 +169,10 @@ async def _resolve_ready_version(db: AsyncSession, usecase_key: str) -> tuple[Us
         raise HTTPException(status_code=404, detail=f"usecase_key={usecase_key!r} không tồn tại hoặc bị disable")
     version = (
         await db.execute(
-            select(UsecaseVersion).where(
-                UsecaseVersion.usecase_id == usecase.id,
-                UsecaseVersion.is_latest.is_(True),
-                UsecaseVersion.status == UsecaseVersionStatus.READY,
-            )
+            select(UsecaseVersion)
+            .where(UsecaseVersion.usecase_id == usecase.id, UsecaseVersion.status == UsecaseVersionStatus.READY)
+            .order_by(UsecaseVersion.version_number.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if version is None:
